@@ -21,6 +21,7 @@ from os.path import expanduser
 from bottle import route
 import re
 import subprocess
+import pygit2
 
 plantumljar = expanduser("~/Downloads/plantuml.jar")
 
@@ -46,6 +47,12 @@ def renderUML(umltext):
     bottle.response.content_type = 'image/png'
     return png
 
+def update_repo(repo):
+    head = repo.head
+    commit = head.peel(pygit2.Commit)
+    oremote=repo.remotes[0]
+    result=oremote.fetch()
+    Repository.checkout_head()
 
 @route('/renderUML/<name>')
 def render(name):
@@ -53,9 +60,28 @@ def render(name):
     if "HTTP_REFERER" in bottle.request.environ: ref = bottle.request.environ['HTTP_REFERER']
 
     ## TODO: Figure out repo from referrer...
-    repo = expanduser("~/temp/overview.wiki")
-    page = "pages/plantuml-example.md"
-    with open(os.path.join(repo, page), "rt") as f:
+    fields = name.split(":")
+    git_server = fields[0]
+    remote = fields[1]
+    page = fields[2]
+    if page[0] == "/": page = page[1:]
+    (pagename, oldext) = os.path.splitext(path)
+    pagename += ".md"
+    gitdir = os.join(repo_cache_dir, os.path.basename(remote))
+
+    if not os.path.isdir(gitdir):
+        logging.error("%s is not a directory" % gitdir)
+        sys.exit(ERROR)
+    try:
+        repo = pygit2.Repository(gitdir)
+    except Exception as e:
+        logging.error("Failed to open git repository %s: %r" % (gitdir, e))
+        sys.exit(ERROR)
+
+    # Attempt to update it
+    update_repo(repo)
+
+    with open(os.path.join(gitdir, pagename), "rt") as f:
         print "Reading file"
         uml_lines = []
         record = False
@@ -79,6 +105,7 @@ def render(name):
                 break
             else:
                 if record: uml_lines.append(l)
+
 
     # I can't return an error image yet. This will probably not be visible, but
     # it's better than nothing.
