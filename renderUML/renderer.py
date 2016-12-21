@@ -57,6 +57,9 @@ def update_repo(gitdir):
     subprocess.call(["git", "-C", gitdir, "pull"])
     # TODO: Check return value
 
+def sanity_check(path):
+    return re.match('^[a-zA-Z/:.-]*$', path) != None
+    
 @route('/renderUML/<name:path>')
 def render(name):
     ref = None
@@ -97,6 +100,14 @@ def render(name):
         if res != 0:
             return "Failed to clone git directory"
 
+    if not sanity_check(gitdir):
+        print "Aborting due to unorthodox characters in %s"%gitdir
+        return None
+
+    if not sanity_check(pagename):
+        print "Aborting due to unorthodox characters in %s"%pagename
+        return None
+        
     # Attempt to update it
     update_repo(gitdir)
 
