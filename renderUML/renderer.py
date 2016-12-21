@@ -22,8 +22,13 @@ from bottle import route
 import re
 import subprocess
 import pygit2
+import logging
+import sys
 
-plantumljar = expanduser("~/Downloads/plantuml.jar")
+plantumljar = expanduser("~/trustable/plantuml.jar")
+repo_cache_dir = expanduser("~/renderUMLrepos")
+
+git_server_whitelist = [ "https://gitlab.com" ]
 
 @route('/hello')
 def hello():
@@ -47,39 +52,39 @@ def renderUML(umltext):
     bottle.response.content_type = 'image/png'
     return png
 
-def update_repo(repo):
-    head = repo.head
-    commit = head.peel(pygit2.Commit)
-    oremote=repo.remotes[0]
-    result=oremote.fetch()
-    Repository.checkout_head()
+def update_repo(gitdir):
+    subprocess.call(["git", "-C", gitdir, "pull"])
+    # TODO: Check return value
 
-@route('/renderUML/<name>')
+@route('/renderUML/<name:path>')
 def render(name):
     ref = None
     if "HTTP_REFERER" in bottle.request.environ: ref = bottle.request.environ['HTTP_REFERER']
+    if not os.path.isdir(repo_cache_dir):
+        os.mkdir(repo_cache_dir)
 
     ## TODO: Figure out repo from referrer...
     fields = name.split(":")
-    git_server = fields[0]
-    remote = fields[1]
+    protocol = fields[0]
+    git_remote = fields[1]
     page = fields[2]
+    git_remote = "%s:%s"%(protocol, git_remote)
     if page[0] == "/": page = page[1:]
-    (pagename, oldext) = os.path.splitext(path)
+    (pagename, oldext) = os.path.splitext(page)
     pagename += ".md"
-    gitdir = os.join(repo_cache_dir, os.path.basename(remote))
-
+    print "git_remote is %s"%git_remote
+    print "pagename is %s"%pagename
+    gitdir = os.path.join(repo_cache_dir, os.path.basename(git_remote))
+    print "gitdir is %s"%gitdir
     if not os.path.isdir(gitdir):
         logging.error("%s is not a directory" % gitdir)
-        sys.exit(ERROR)
-    try:
-        repo = pygit2.Repository(gitdir)
-    except Exception as e:
-        logging.error("Failed to open git repository %s: %r" % (gitdir, e))
-        sys.exit(ERROR)
+        # OK, try and clone it
+        res = subprocess.call(["git","clone", git_remote, gitdir])
+        if res != 0:
+            return "Failed to clone git directory"
 
     # Attempt to update it
-    update_repo(repo)
+    update_repo(gitdir)
 
     with open(os.path.join(gitdir, pagename), "rt") as f:
         print "Reading file"
