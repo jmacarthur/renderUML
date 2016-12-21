@@ -28,7 +28,8 @@ import sys
 plantumljar = expanduser("~/trustable/plantuml.jar")
 repo_cache_dir = expanduser("~/renderUMLrepos")
 
-git_server_whitelist = [ "https://gitlab.com" ]
+git_server_whitelist = [ "gitlab.com" ]
+repo_prefix_whitelist = [ "trustable" ]
 
 @route('/hello')
 def hello():
@@ -68,7 +69,20 @@ def render(name):
     protocol = fields[0]
     git_remote = fields[1]
     page = fields[2]
+
+    path_components = git_remote.split("/")
+    server = path_components[2]
+    repository_name = "/".join(path_components[3:])
+    
+    if server not in git_server_whitelist:
+        print "Server %s rejected"%server
+        return None
+    if not any(repository_name.startswith(x) for x in repo_prefix_whitelist):
+        print "repository_name %s rejected"%repository_name
+        return None
+    print "Server is %s"%server
     git_remote = "%s:%s"%(protocol, git_remote)
+
     if page[0] == "/": page = page[1:]
     (pagename, oldext) = os.path.splitext(page)
     pagename += ".md"
