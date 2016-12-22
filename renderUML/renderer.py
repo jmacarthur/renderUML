@@ -21,12 +21,12 @@ from os.path import expanduser
 from bottle import route
 import re
 import subprocess
-import pygit2
 import logging
 import sys
 
-plantumljar = expanduser("~/trustable/plantuml.jar")
-repo_cache_dir = expanduser("~/renderUMLrepos")
+home = "/home/jimmacarthur"
+plantumljar = os.path.join(home, "plantuml.jar")
+repo_cache_dir = os.path.join(home, "renderUMLrepos")
 
 git_server_whitelist = [ "gitlab.com" ]
 repo_prefix_whitelist = [ "trustable" ]
@@ -59,7 +59,19 @@ def update_repo(gitdir):
 
 def sanity_check(path):
     return re.match('^[a-zA-Z/:.-]*$', path) != None
-    
+
+def serve_error_image(error_name):
+    image_file_name = os.path.join(["error-images", error_name + ".png"])
+    if not os.path.exists(image_file_name):
+        image_file_name = os.path.join(["error-images", "unknown-error.png"])
+    try:
+        with open(image_file_name, "rb") as f:
+            image_data = f.read()
+            return image_data
+    except IOError as e:
+        logging.error("Error serving the error image for '%s': %r"%(error_name, e))
+    return None
+
 @route('/renderUML/<name:path>')
 def render(name):
     ref = None
@@ -67,52 +79,62 @@ def render(name):
     if not os.path.isdir(repo_cache_dir):
         os.mkdir(repo_cache_dir)
 
-    ## TODO: Figure out repo from referrer...
+    # No idea why, but with WSGI on, some double slashes get converted to single ones in the URL.
+    if re.search("https:\/[^\/]", name):
+        name = name.replace("https:/", "https://")
+
+    if not re.search("https:\/\/", name):
+        # The repository must have a https prefix; we cannot clone over SSH.
+
+    # URLs should be in the form <repository URL>:<page path>, but the URL will have a colon in it,
+    # so we'll split into three and recombine rather than try and split just on the second colon.
     fields = name.split(":")
     protocol = fields[0]
-    git_remote = fields[1]
-    page = fields[2]
+    git_server_and_path = fields[1].strip("/")
+    page = fields[2].strip("/")
 
     path_components = git_remote.split("/")
-    server = path_components[2]
-    repository_name = "/".join(path_components[3:])
-    
-    if server not in git_server_whitelist:
-        print "Server %s rejected"%server
-        return None
-    if not any(repository_name.startswith(x) for x in repo_prefix_whitelist):
-        print "repository_name %s rejected"%repository_name
-        return None
-    print "Server is %s"%server
-    git_remote = "%s:%s"%(protocol, git_remote)
+    server = path_components[0]
+    repository_name = "/".join(path_components[1:])
 
-    if page[0] == "/": page = page[1:]
+    if server not in git_server_whitelist:
+        logging.error("Server %s rejected"%server)
+        return serve_error_image("bad-domain")
+    if not any(repository_name.startswith(x) for x in repo_prefix_whitelist):
+        logging.error("Repository_name %s rejected"%repository_name)
+        return serve_error_image("bad-repo")
+
+    logging.info("Server is %s"%server)
+    git_remote = "%s:%s"%(protocol, git_server_and_path)
+
     (pagename, oldext) = os.path.splitext(page)
     pagename += ".md"
-    print "git_remote is %s"%git_remote
-    print "pagename is %s"%pagename
+    logging.info("git_remote is %s"%git_remote)
+    logging.info("pagename is %s"%pagename)
     gitdir = os.path.join(repo_cache_dir, os.path.basename(git_remote))
-    print "gitdir is %s"%gitdir
+
+    logging.info("gitdir is %s"%gitdir)
+
     if not os.path.isdir(gitdir):
         logging.error("%s is not a directory" % gitdir)
         # OK, try and clone it
         res = subprocess.call(["git","clone", git_remote, gitdir])
         if res != 0:
-            return "Failed to clone git directory"
+            logging.error("Failed to clone git directory")
+            return serve_error_image("clone-failed")
 
     if not sanity_check(gitdir):
-        print "Aborting due to unorthodox characters in %s"%gitdir
-        return None
+        logging.error("Aborting due to unorthodox characters in %s"%gitdir)
+        return serve_error_image("bad-input")
 
     if not sanity_check(pagename):
-        print "Aborting due to unorthodox characters in %s"%pagename
-        return None
-        
-    # Attempt to update it
+        logging.error("Aborting due to unorthodox characters in %s"%pagename)
+        return serve_error_image("bad-input")
+
+    # Attempt to update the repository
     update_repo(gitdir)
 
     with open(os.path.join(gitdir, pagename), "rt") as f:
-        print "Reading file"
         uml_lines = []
         record = False
         while True:
@@ -126,17 +148,15 @@ def render(name):
             elif re.match("\s*-->\s*", l):
                 record = False
             elif re.search("\/renderUML\/%s"%name, l):
-                print "Potential link line found"
+                logging.info("Potential link line found")
                 if uml_lines != []:
-                    print "rendering UML extracted from page"
+                    logging.info("rendering UML extracted from page")
                     return renderUML("\n".join(uml_lines))
                 else:
-                    print "No UML found"
+                    logging.warning("No UML found")
                 break
             else:
                 if record: uml_lines.append(l)
 
 
-    # I can't return an error image yet. This will probably not be visible, but
-    # it's better than nothing.
-    return "Rendering failed"
+    return serve_error_image("no-uml")
