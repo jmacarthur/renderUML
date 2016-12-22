@@ -56,7 +56,9 @@ def renderUML(umltext):
                          stderr=subprocess.PIPE,
                          stdin=subprocess.PIPE)
     (png, err) = p.communicate(umltext)
-    bottle.response.content_type = 'image/png'
+    logging.info("Returning %d bytes"%len(png))
+    if len(png) == 0 or p.returncode != 0:
+        return serve_error_image("plantuml-failure")
     return png
 
 def update_repo(gitdir):
@@ -67,9 +69,9 @@ def sanity_check(path):
     return re.match('^[a-zA-Z/:.-]*$', path) != None
 
 def serve_error_image(error_name):
-    image_file_name = os.path.join(["error-images", error_name + ".png"])
+    image_file_name = os.path.join("error-images", error_name + ".png")
     if not os.path.exists(image_file_name):
-        image_file_name = os.path.join(["error-images", "unknown-error.png"])
+        image_file_name = os.path.join("error-images", "unknown-error.png")
     try:
         with open(image_file_name, "rb") as f:
             image_data = f.read()
@@ -81,6 +83,8 @@ def serve_error_image(error_name):
 @route('/renderUML/<name:path>')
 def render(name):
     ref = None
+    logging.basicConfig(level=logging.INFO)
+    bottle.response.content_type = 'image/png'
     if "HTTP_REFERER" in bottle.request.environ: ref = bottle.request.environ['HTTP_REFERER']
     if not os.path.isdir(repo_cache_dir):
         os.mkdir(repo_cache_dir)
@@ -91,6 +95,7 @@ def render(name):
 
     if not re.search("https:\/\/", name):
         # The repository must have a https prefix; we cannot clone over SSH.
+        return serve_error_image("https-only")
 
     # URLs should be in the form <repository URL>:<page path>, but the URL will have a colon in it,
     # so we'll split into three and recombine rather than try and split just on the second colon.
@@ -99,7 +104,7 @@ def render(name):
     git_server_and_path = fields[1].strip("/")
     page = fields[2].strip("/")
 
-    path_components = git_remote.split("/")
+    path_components = git_server_and_path.split("/")
     server = path_components[0]
     repository_name = "/".join(path_components[1:])
 
@@ -111,7 +116,7 @@ def render(name):
         return serve_error_image("bad-repo")
 
     logging.info("Server is %s"%server)
-    git_remote = "%s:%s"%(protocol, git_server_and_path)
+    git_remote = "%s://%s"%(protocol, git_server_and_path)
 
     (pagename, oldext) = os.path.splitext(page)
     pagename += ".md"
@@ -120,7 +125,7 @@ def render(name):
     gitdir = os.path.join(repo_cache_dir, os.path.basename(git_remote))
 
     logging.info("gitdir is %s"%gitdir)
-
+    logging.info("repo to clone is %s"%git_remote)
     if not os.path.isdir(gitdir):
         logging.error("%s is not a directory" % gitdir)
         # OK, try and clone it
