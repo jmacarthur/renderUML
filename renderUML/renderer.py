@@ -30,9 +30,10 @@ import subprocess
 import logging
 import sys
 
-home = "/home/jimmacarthur"
-plantumljar = os.path.join(home, "plantuml.jar")
-repo_cache_dir = os.path.join(home, "renderUMLrepos")
+from config import config
+
+plantumljar = os.path.join(config["home"], "plantuml.jar")
+repo_cache_dir = os.path.join(config["home"], "renderUMLrepos")
 
 git_server_whitelist = [ "gitlab.com" ]
 repo_prefix_whitelist = [ "trustable" ]
@@ -58,7 +59,7 @@ def renderUML(umltext):
     (png, err) = p.communicate(umltext)
     logging.info("Returning %d bytes"%len(png))
     if len(png) == 0 or p.returncode != 0:
-        return serve_error_image("plantuml-failure")
+        return serve_error_image("plantuml-failed")
     return png
 
 def update_repo(gitdir):
